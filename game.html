@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Motocross</title>
+    <style>
+        canvas {
+            display: block; /* Make canvas responsive */
+            margin: 30px auto; /* Center canvas */
+        }
+
+        #scoreboard {
+            background-color: teal;
+            width: 160px;
+            height: 30px;
+            padding: 10px;
+            position: fixed;
+            top: 30px;
+            left: 10px;
+            color: black;
+            font-family: Arial, sans-serif;
+            font-size: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 20px black;
+        }
+
+        #levelDisplay {
+            background-color: teal;
+            width: 160px;
+            height: 30px;
+            padding: 10px;
+            position: fixed;
+            top: 30px;
+            right: 10px;
+            color: black;
+            font-family: Arial, sans-serif;
+            font-size: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 20px black;
+        }
+
+        #gameOverScreen {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            font-family: Arial, sans-serif;
+        }
+    </style>
+</head>
+<body>
+<div id="scoreboard">Score: <span id="score">0</span></div>
+<div id="levelDisplay">Level: <span id="level">1</span></div>
+<canvas id="gameCanvas"></canvas>
+<div id="gameOverScreen">
+    <h2>Game Over</h2>
+    <p>Your Score: <span id="finalScore">0</span></p>
+    <button onclick="restartGame()">Restart</button>
+</div>
+<audio id="accelerationSound" src="acceleration_sound.mp3"></audio>
+<audio id="brakingSound" src="braking_sound.mp3"></audio>
+<audio id="collisionSound" src="collision_sound.mp3"></audio>
+<script>
+    const c = document.getElementById("gameCanvas");
+    const ctx = c.getContext("2d");
+
+    // Load audio elements
+    const accelerationSound = document.getElementById("accelerationSound");
+    const brakingSound = document.getElementById("brakingSound");
+    const collisionSound = document.getElementById("collisionSound");
+
+    const gameOverScreen = document.getElementById("gameOverScreen");
+    const finalScoreDisplay = document.getElementById("finalScore");
+
+    function resizeCanvas() {
+        c.width = window.innerWidth * 0.7; // Adjust canvas width
+        c.height = window.innerHeight * 0.8; // Adjust canvas height
+    }
+
+    resizeCanvas(); // Set initial canvas size
+
+    window.addEventListener("resize", resizeCanvas); // Resize canvas when window resizes
+
+    let perm = [];
+    while (perm.length < 255) {
+        perm.push(Math.floor(Math.random() * 255));
+    }
+
+    const lerp = (a, b, t) => a + ((b - a) * (1 - Math.cos(t * Math.PI))) / 2;
+    const noise = (x) => {
+        x = (x * 0.01) % 255;
+        return lerp(perm[Math.floor(x)], perm[Math.ceil(x)], x - Math.floor(x));
+    };
+
+    let score = 0;
+    let level = 1;
+
+    function Player() {
+        this.reset = () => {
+            this.x = c.width / 2;
+            this.y = 0;
+            this.ySpeed = 0;
+            this.rot = 0;
+            this.rSpeed = 0;
+        };
+
+        this.reset();
+        this.img = new Image();
+        this.img.src = "bike.png";
+        this.draw = function () {
+            const p1 = c.height - noise(t + this.x) * 0.25;
+            const p2 = c.height - noise(t + 5 + this.x) * 0.25;
+
+            let grounded = 0;
+
+            if (p1 - 15 > this.y) this.ySpeed += 0.1;
+            else {
+                this.ySpeed -= this.y - (p1 - 15);
+                this.y = p1 - 15;
+                grounded = 1;
+            }
+
+            if (playing || (grounded && Math.abs(this.rot) > Math.PI * 0.5)) {
+                playing = false;
+                this.rSpeed = 0;
+                k.ArrowUp = 1;
+                this.x -= speed * 5;
+            }
+
+            const angle = Math.atan(p2 - 15 - this.y, 5);
+            this.y += this.ySpeed;
+
+            if (grounded && playing) {
+                this.rot -= (this.rot - angle) * 0.5;
+                this.rSpeed -= angle - this.rot;
+            }
+            this.rSpeed += (k.ArrowLeft - k.ArrowRight) * 0.05;
+
+            this.rot -= this.rSpeed * 0.1;
+            if (this.rot > Math.PI) this.rot = -Math.PI;
+            if (this.rot < -Math.PI) this.rot = Math.PI;
+
+            ctx.save();
+            ctx.translate(this.x, this.y);
+            ctx.rotate(this.rot);
+            ctx.drawImage(this.img, -40, -40, 100, 100); // Increased image size
+            ctx.restore();
+        };
+    }
+
+    function Enemy() {
+        this.x = Math.random() * c.width; // Random x position
+        this.y = -50; // Start above the canvas
+        this.speed = Math.random() * 2 + 1; // Random speed
+
+        this.img = new Image();
+        this.img.src = "fireball.gif"; // Load fireball image
+
+        this.draw = function () {
+            ctx.drawImage(this.img, this.x, this.y, 30, 30); // Draw the fireball image
+        };
+
+        this.update = function () {
+            this.y += this.speed; // Move the fireball down
+        };
+
+        this.isCollidingWithPlayer = function(player) {
+            return player.x < this.x + 20 &&
+                   player.x + 80 > this.x &&
+                   player.y < this.y + 20 &&
+                   player.y + 80 > this.y;
+        }
+    }
+
+    function HumanEnemy() {
+        this.x = Math.random() * c.width; // Random x position
+        this.y = -50; // Start above the canvas
+        this.speed = Math.random() * 2 + 1; // Random speed
+
+        this.img = new Image();
+        this.img.src = "enemy.gif"; // Load  enemy image
+
+        this.draw = function () {
+            ctx.drawImage(this.img, this.x, this.y, 150, 150); // Draw the human enemy image
+        };
+
+        this.update = function () {
+            this.y += this.speed; // Move the human enemy down
+        };
+
+        this.isCollidingWithPlayer = function(player) {
+            return player.x < this.x + 40 &&
+                   player.x + 80 > this.x &&
+                   player.y < this.y + 40 &&
+                   player.y + 80 > this.y;
+        }
+    }
+
+    const players = [];
+    const numPlayers = 5; // Including the main player
+    for (let i = 0; i < numPlayers; i++) {
+        const newPlayer = new Player();
+        players.push(newPlayer);
+    }
+
+    const enemies = []; // Array to hold enemies
+
+    let t = 0;
+    let speed = 0;
+    let playing = true;
+    const k = { ArrowUp: 0, ArrowDown: 0, ArrowLeft: 0, ArrowRight: 0 };
+    function loop() {
+        if (players[0].x < 0 || isPlayerCollidingWithEnemy(players[0])) {
+            gameOver();
+            return;
+        }
+
+        // Check for collisions
+        function isPlayerCollidingWithEnemy(player) {
+            return enemies.some(enemy => {
+                if (enemy.isCollidingWithPlayer(player)) {
+                    // Stop all sounds
+                    accelerationSound.pause();
+                    brakingSound.pause();
+                    collisionSound.play(); // Play collision sound
+                    return true; // Collision detected
+                }
+                return false;
+            });
+        }
+
+        speed -= (speed - (k.ArrowUp - k.ArrowDown)) * 0.01;
+        t += 10 * speed;
+        ctx.fillStyle = "black"; // Set background color to sky blue
+        ctx.fillRect(0, 0, c.width, c.height);
+
+        // Draw Moon
+        ctx.fillStyle = "white";
+        ctx.beginPath();
+        ctx.arc(150, 100, 50, 1, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = "#aaa"; // Change track color
+        ctx.beginPath();
+        ctx.moveTo(0, c.height);
+        for (let i = 0; i < c.width; i++)
+            ctx.lineTo(i, c.height - noise(t + i) * 0.25);
+        ctx.lineTo(c.width, c.height);
+        ctx.fill();
+
+        players.forEach(player => player.draw());
+
+        // Update and draw enemies
+        enemies.forEach(enemy => {
+            enemy.update();
+            enemy.draw();
+        });
+
+        // Spawn enemies randomly
+        if (Math.random() > 0.995) { // Even lower probability of spawning enemies
+            enemies.push(new Enemy());
+        }
+
+        // Spawn human enemy randomly
+        if (Math.random() > 0.998) { // Lower probability of spawning human enemy
+            enemies.push(new HumanEnemy());
+        }
+
+        // Update score and level
+        score += 1;
+        if (score % 500 === 0) { // Increase level every 500 score
+            level++;
+        }
+
+        // Update scoreboard
+        document.getElementById("score").textContent = score;
+        document.getElementById("level").textContent = level;
+
+        // Play acceleration sound
+        if (k.ArrowUp) {
+            accelerationSound.play();
+        } else {
+            accelerationSound.pause();
+        }
+
+        // Play braking sound
+        if (k.ArrowDown) {
+            brakingSound.play();
+        } else {
+            brakingSound.pause();
+        }
+
+        requestAnimationFrame(loop);
+    }
+    onkeydown = (d) => (k[d.key] = 1);
+    onkeyup = (d) => (k[d.key] = 0);
+
+    function gameOver() {
+        playing = false;
+        gameOverScreen.style.display = "block"; // Display game over screen
+        finalScoreDisplay.textContent = score; // Display final score
+    }
+
+    function restartGame() {
+        location.reload(); // Reload the page to restart the game
+    }
+
+    loop();
+</script>
+</body>
+</html>
